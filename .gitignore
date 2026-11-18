@@ -1,4 +1,5 @@
 # The plugin's own folder when run by dalibre-plugin, and packages.
 .data/
+dist/
 *.dalibre-plugin
 node_modules/

@@ -14,6 +14,16 @@
 // @types/node (npm i -D @types/node).
 
 declare namespace Dalibre {
+  /** A token of dalibre.html.tokens. */
+  type HTMLToken =
+    /** Text, with its entities decoded (as written in script and style). */
+    | { type: "text"; raw: string; text: string }
+    /** A tag: its name lowercase, its attributes decoded (the first of a repeated one). */
+    | { type: "start" | "self"; raw: string; name: string; attrs?: Record<string, string> }
+    | { type: "end"; raw: string; name: string }
+    /** A comment, also <?xml …?> and <![CDATA[…]]>; text is what's inside. */
+    | { type: "comment" | "doctype"; raw: string; text: string };
+
   /** What search is asked for. */
   interface Query {
     /** What the user typed, trimmed. May be empty: return popular or recent books, or nothing. */
@@ -94,13 +104,22 @@ declare namespace Dalibre {
     url?: string;
   }
 
-  /** Where the host downloads a file from. */
-  interface DownloadRequest {
-    url: string;
-    headers?: Record<string, string>;
-    /** The file's name; else the server's, else the title. The extension is fixed to the format. */
-    filename?: string;
-  }
+  /**
+   * Where the host downloads a file from: a url, or, for a file the
+   * plugin made (with a tool, say), its path in /work or /data.
+   */
+  type DownloadRequest =
+    | {
+        url: string;
+        headers?: Record<string, string>;
+        /** The file's name; else the server's, else the title. The extension is fixed to the format. */
+        filename?: string;
+      }
+    | {
+        /** The book's file, made by the plugin: "/work/book.epub". Dalibre moves it into the library. */
+        path: string;
+        filename?: string;
+      };
 
   /** Kinds the app tells the user about differently. */
   type ErrorKind =
@@ -269,8 +288,9 @@ declare namespace Dalibre {
     add?: { path: string; metadata?: Changes }[];
     /** Files to add to books; a file of the same format is kept as ORIGINAL_<format>. */
     formats?: { book: number; path: string }[];
-    /** A page on one of the plugin's hosts, to open in the browser. */
-    open?: string;
+    /** Pages on the plugin's hosts to open in the browser, each in its
+     *  tab: one, or several to open a group at once. */
+    open?: string | string[];
   }
 
   /** What a plugin with actions exports. */
@@ -284,15 +304,39 @@ declare namespace Dalibre {
     | { key: string; title: string; type: "text"; value?: string }
     | { key: string; title: string; type: "toggle"; value?: boolean }
     | { key: string; title: string; type: "select"; value?: string; options: { value: string; title?: string }[] }
-    | { key: string; title: string; type: "multiselect"; value?: string[]; options: { value: string; title?: string }[] };
+    | { key: string; title: string; type: "multiselect"; value?: string[]; options: { value: string; title?: string }[] }
+    | { key: string; title: string; type: "list"; value?: string; options: { value: string; title?: string; group?: string; badge?: string; starred?: boolean }[] };
 
   /** What dalibre.form asks: Dalibre draws it, under the action's title. */
   interface Form {
     /** The form's button; the action's title when left out. */
     submit?: string;
     fields: FormField[];
+    /** A line under the fields, of what answering does. Up to 120 characters. */
+    note?: string;
     /** Start with the user's last answers to this action's form, as calibre plugins keep their options. */
     remember?: boolean;
+  }
+
+  /** What dalibre.exec resolves to. */
+  interface ExecResult {
+    /** The tool's exit code: 0 when it says it succeeded. */
+    code: number;
+    /** What it printed, up to 16 MB each. */
+    stdout: string;
+    stderr: string;
+  }
+
+  /** dalibre.exec's options. */
+  interface ExecOptions {
+    /** More environment variables. */
+    env?: Record<string, string>;
+    /** Written to its input, then closed: pass secrets this way, not in args. */
+    stdin?: string;
+    /** In milliseconds; 60 s when left out, at most the call's own time. */
+    timeout?: number;
+    /** Each line it prints, as it prints it: for progress. */
+    onLine?(stream: "stdout" | "stderr", line: string): void;
   }
 
   /** What a file type plugin exports, after calibre's file type plugins. */
@@ -328,10 +372,31 @@ declare const dalibre: {
    * answers come from whoever started the action.
    */
   form(form: Dalibre.Form): Promise<Record<string, string | boolean | string[]>>;
+  /**
+   * Runs one of the tools in plugin.json's tools, outside the sandbox: id
+   * is its key, args its arguments, passed as they are (no shell). An
+   * argument that is a path in /work or /data is the real file's. It runs
+   * in /work, with only a program's usual environment, the computer's
+   * proxy (HTTP_PROXY, HTTPS_PROXY, NO_PROXY) and options.env. Rejects
+   * with kind "timeout" when it takes too long, "unavailable" when it
+   * can't start; a non-zero exit is a result, not an error.
+   */
+  exec(id: string, args: string[], options?: Dalibre.ExecOptions): Promise<Dalibre.ExecResult>;
   /** Whether dalibre.form would show in a window. */
   readonly interactive: boolean;
   /** In an action's run: the job's progress bar. total 0 when unknown. */
   progress(done: number, total: number): void;
+  readonly html: {
+    /**
+     * HTML or XHTML split into tokens; their raw joined is html. Change the
+     * tokens you need and join the raw of the rest, and the rest stays as
+     * written. Read as XHTML: <title/> is empty, and only script, style,
+     * title and textarea hold text.
+     */
+    tokens(html: string): Dalibre.HTMLToken[];
+    /** Text escaped for HTML or XHTML: & < > and ". */
+    escape(text: string): string;
+  };
   readonly library: {
     /** In an action's run: every book in the library; with { comments: true }, with their comments. */
     books(options?: { comments?: boolean }): AsyncGenerator<Dalibre.BookInfo, void, void>;
